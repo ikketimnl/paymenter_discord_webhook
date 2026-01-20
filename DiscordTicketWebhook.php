@@ -17,7 +17,7 @@ use Paymenter\Extensions\Others\paymenter_discord_webhook\Services;
     url: 'https://ikketim.nl',
     icon: 'https://raw.githubusercontent.com/ikketimnl/paymenter_discord_webhook/main/images/logo.png'
 )]
-class DiscordTicketWebhook extends Extension
+class paymenter_discord_webhook extends Extension
 {
     public function boot()
     {
