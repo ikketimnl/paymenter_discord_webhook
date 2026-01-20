@@ -88,7 +88,7 @@ Each Discord message includes a direct admin link to the ticket.
 
 1. Upload the extension to:
 ```
-extensions/Others/paymenter-discord-webhook
+extensions/Others/paymenter_discord_webhook
 ```
 
 2. From the Paymenter root directory, run:
