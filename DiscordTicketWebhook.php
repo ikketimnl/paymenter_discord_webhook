@@ -15,7 +15,7 @@ use Paymenter\Extensions\Others\paymenter_discord_webhook\src\Services\DiscordWe
     version: '1.0.1',
     author: 'ikketim',
     url: 'https://ikketim.nl',
-    icon: 'https://paymenter.org/logo-dark.svg'
+    icon: 'https://raw.githubusercontent.com/ikketimnl/paymenter_discord_webhook/main/images/logo.png'
 )]
 class DiscordTicketWebhook extends Extension
 {
