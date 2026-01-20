@@ -1,12 +1,12 @@
 <?php
 
-namespace Paymenter\Extensions\Others\paymenter-discord-webhook\Filament\Pages;
+namespace Paymenter\Extensions\Others\paymenter_discord_webhook\Filament\Pages;
 
 use Filament\Forms;
 use Filament\Pages\Page;
 use Filament\Notifications\Notification;
 use Illuminate\Support\Facades\DB;
-use Paymenter\Extensions\Others\paymenter-discord-webhook\src\Services\DiscordWebhook;
+use Paymenter\Extensions\Others\paymenter_discord_webhook\src\Services\DiscordWebhook;
 
 class DiscordTicketWebhookTest extends Page implements Forms\Contracts\HasForms
 {
