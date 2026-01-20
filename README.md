@@ -156,4 +156,5 @@ MIT
 ## 🤝 Contributing / Customization
 PRs and extensions are welcome.  
 The extension is designed to be modular and easy to extend.
+
 ![buy me a coffee](https://buymeacoffee.com/ikketim)
