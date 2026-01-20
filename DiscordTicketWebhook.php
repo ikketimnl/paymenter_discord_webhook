@@ -1,13 +1,13 @@
 <?php
 
-namespace Paymenter\Extensions\Others\DiscordTicketWebhook;
+namespace Paymenter\Extensions\Others\paymenter_discord_webhook;
 
 use App\Attributes\ExtensionMeta;
 use App\Classes\Extension\Extension;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\View;
-use Paymenter\Extensions\Others\DiscordTicketWebhook\src\Services\DiscordWebhook;
+use Paymenter\Extensions\Others\paymenter_discord_webhook\src\Services\DiscordWebhook;
 
 #[ExtensionMeta(
     name: 'Discord Ticket Webhook',
