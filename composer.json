@@ -1,9 +1,9 @@
 {
-  "name": "paymenter/discord-ticket-webhook",
+  "name": "paymenter/discord_ticket_webhook",
   "type": "paymenter-extension",
   "autoload": {
     "psr-4": {
-      "Paymenter\\Extensions\\Others\\payenter-discord-webhook\\": ""
+      "Paymenter\\Extensions\\Others\\payenter_discord_webhook\\": ""
     }
   }
 }
