@@ -1,27 +1,27 @@
 <?php
 
-namespace Paymenter\Extensions\Others\paymenter_discord_webhook;
+namespace Paymenter\Extensions\Others\DiscordTicketWebhook;
 
 use App\Attributes\ExtensionMeta;
 use App\Classes\Extension\Extension;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\View;
-use Paymenter\Extensions\Others\paymenter_discord_webhook\src\Services\DiscordWebhook;
+use Paymenter\Extensions\Others\DiscordTicketWebhook\src\Services\DiscordWebhook;
 
 #[ExtensionMeta(
     name: 'Discord Ticket Webhook',
-    description: 'Discord notifications for ticket create/update/reply with per-department mentions and per-department webhook routing.',
-    version: '1.0.0',
+    description: 'Discord webhook notifications for tickets (created/updated/replies) with per-department webhooks and mentions.',
+    version: '1.0.1',
     author: 'ikketim',
     url: 'https://ikketim.nl',
-    icon: 'https://ikketim.nl/wp-content/uploads/2025/09/cropped-cropped-ikketim-logo-new-300x300-removebg-preview.png'
+    icon: 'https://paymenter.org/logo-dark.svg'
 )]
 class DiscordTicketWebhook extends Extension
 {
     public function boot()
     {
-        // Register extension view namespace for Filament page
+        // For the Filament test page view
         View::addNamespace('discordticketwebhook', __DIR__ . '/resources/views');
 
         // Ticket created
@@ -39,18 +39,18 @@ class DiscordTicketWebhook extends Extension
             $this->webhookForTicket($ticket)->send($payload);
         });
 
-        // Ticket updated (status/subject/department/etc.)
+        // Ticket updated
         Event::listen(\App\Events\Ticket\Updated::class, function ($event) {
             if (!$this->cfgBool('notify_ticket_updated', true)) return;
 
             $ticket = $event->ticket;
 
-            $changes = method_exists($ticket, 'getChanges') ? $ticket->getChanges() : [];
+            $changes = method_exists($ticket, 'getChanges') ? (array) $ticket->getChanges() : [];
             unset($changes['updated_at']);
 
             if (empty($changes)) return;
 
-            // Map fields -> config flags (adjust if your DB columns differ)
+            // Map fields -> config flags (may vary per schema; "other" catches anything else)
             $fieldRules = [
                 'status'        => 'notify_update_status',
                 'subject'       => 'notify_update_subject',
@@ -61,19 +61,16 @@ class DiscordTicketWebhook extends Extension
                 'assignee_id'   => 'notify_update_assignee',
             ];
 
-            $matched = false;
-            $matchedTypes = [];
-
+            $matchedFlags = [];
             foreach (array_keys($changes) as $field) {
                 $flag = $fieldRules[$field] ?? 'notify_update_other';
                 if ($this->cfgBool($flag, true)) {
-                    $matched = true;
-                    $matchedTypes[$flag] = true;
+                    $matchedFlags[$flag] = true;
                 }
             }
 
-            // All changed fields were disabled by settings
-            if (!$matched) return;
+            // If user disabled the relevant update types, skip
+            if (empty($matchedFlags)) return;
 
             $typesLabel = implode(', ', array_map(function ($flag) {
                 return match ($flag) {
@@ -84,7 +81,7 @@ class DiscordTicketWebhook extends Extension
                     'notify_update_assignee' => 'Assignee',
                     default => 'Other',
                 };
-            }, array_keys($matchedTypes)));
+            }, array_keys($matchedFlags)));
 
             $payload = $this->payload(
                 'updated',
@@ -92,7 +89,7 @@ class DiscordTicketWebhook extends Extension
                 $ticket
             );
 
-            // Add diff field
+            // Add changed fields
             $diffLines = [];
             foreach ($changes as $field => $newValue) {
                 $oldValue = method_exists($ticket, 'getOriginal') ? $ticket->getOriginal($field) : null;
@@ -108,7 +105,7 @@ class DiscordTicketWebhook extends Extension
             $this->webhookForTicket($ticket)->send($payload);
         });
 
-        // Ticket reply posted (TicketMessage created)
+        // Ticket reply posted
         Event::listen(\App\Events\TicketMessage\Created::class, function ($event) {
             if (!$this->cfgBool('notify_ticket_reply', true)) return;
 
@@ -121,7 +118,13 @@ class DiscordTicketWebhook extends Extension
                 $ticket
             );
 
-            $includeBody = $this->cfgBool('include_message_body', false);
+            if ($this->cfgBool('include_message_body', false)) {
+                $payload['embeds'][0]['fields'][] = [
+                    'name' => 'Message',
+                    'value' => $this->truncate((string)($msg->message ?? ''), 900),
+                    'inline' => false,
+                ];
+            }
 
             $author = $msg->user?->email ?? $msg->user?->name ?? null;
             if ($author) {
@@ -132,184 +135,106 @@ class DiscordTicketWebhook extends Extension
                 ];
             }
 
-            if ($includeBody) {
-                $payload['embeds'][0]['fields'][] = [
-                    'name' => 'Message',
-                    'value' => $this->truncate((string)($msg->message ?? ''), 900),
-                    'inline' => false,
-                ];
-            }
-
             $this->webhookForTicket($ticket)->send($payload);
         });
     }
 
     public function getConfig($values = [])
     {
-        return array_merge(
+        $config = [
             [
-                // General webhook
-                [
-                    'name' => 'webhook_url',
-                    'label' => 'General Discord Webhook URL',
-                    'type' => 'text',
-                    'default' => '',
-                    'required' => true,
-                    'validation' => 'url',
-                ],
-                [
-                    'name' => 'discord_username',
-                    'label' => 'Webhook Username (optional)',
-                    'type' => 'text',
-                    'default' => 'Paymenter',
-                ],
-                [
-                    'name' => 'discord_avatar_url',
-                    'label' => 'Webhook Avatar URL (optional)',
-                    'type' => 'text',
-                    'default' => '',
-                    'validation' => 'nullable|url',
-                ],
-                [
-                    'name' => 'ticket_url_template',
-                    'label' => 'Ticket URL Template',
-                    'type' => 'text',
-                    'default' => 'https://account.ikketim.nl/admin/tickets/{id}/edit',
-                    'description' => 'Supported tokens: {id}',
-                ],
-
-                // Notification type toggles
-                [
-                    'name' => 'notify_ticket_created',
-                    'label' => 'Notify: Ticket created',
-                    'type' => 'checkbox',
-                    'default' => true,
-                ],
-                [
-                    'name' => 'notify_ticket_updated',
-                    'label' => 'Notify: Ticket updated',
-                    'type' => 'checkbox',
-                    'default' => true,
-                ],
-                [
-                    'name' => 'notify_ticket_reply',
-                    'label' => 'Notify: Ticket reply posted',
-                    'type' => 'checkbox',
-                    'default' => true,
-                ],
-                [
-                    'name' => 'include_message_body',
-                    'label' => 'Include reply content in Discord',
-                    'type' => 'checkbox',
-                    'default' => false,
-                ],
-
-                // Update sub-types
-                [
-                    'name' => 'notify_update_status',
-                    'label' => 'Update type: Status changed',
-                    'type' => 'checkbox',
-                    'default' => true,
-                ],
-                [
-                    'name' => 'notify_update_subject',
-                    'label' => 'Update type: Subject changed',
-                    'type' => 'checkbox',
-                    'default' => true,
-                ],
-                [
-                    'name' => 'notify_update_department',
-                    'label' => 'Update type: Department changed',
-                    'type' => 'checkbox',
-                    'default' => true,
-                ],
-                [
-                    'name' => 'notify_update_priority',
-                    'label' => 'Update type: Priority changed',
-                    'type' => 'checkbox',
-                    'default' => true,
-                ],
-                [
-                    'name' => 'notify_update_assignee',
-                    'label' => 'Update type: Assignee changed',
-                    'type' => 'checkbox',
-                    'default' => true,
-                ],
-                [
-                    'name' => 'notify_update_other',
-                    'label' => 'Update type: Other field changed',
-                    'type' => 'checkbox',
-                    'default' => true,
-                ],
-
-                // Mentions: global + per-type
-                [
-                    'name' => 'default_mentions',
-                    'label' => 'Default mentions (global)',
-                    'type' => 'text',
-                    'default' => '',
-                    'description' => 'Used if the department has no mentions set (or ticket has no department). Comma-separated: role:ID, user:ID, or raw <@...>.',
-                ],
-                [
-                    'name' => 'mentions_on_created',
-                    'label' => 'Extra mentions: Ticket created',
-                    'type' => 'text',
-                    'default' => '',
-                    'description' => 'Additional mentions only for “ticket created”. Same format.',
-                ],
-                [
-                    'name' => 'mentions_on_updated',
-                    'label' => 'Extra mentions: Ticket updated',
-                    'type' => 'text',
-                    'default' => '',
-                    'description' => 'Additional mentions only for “ticket updated”. Same format.',
-                ],
-                [
-                    'name' => 'mentions_on_reply',
-                    'label' => 'Extra mentions: Ticket reply posted',
-                    'type' => 'text',
-                    'default' => '',
-                    'description' => 'Additional mentions only for “ticket reply”. Same format.',
-                ],
+                'name' => 'webhook_url',
+                'label' => 'General Discord Webhook URL',
+                'type' => 'text',
+                'default' => '',
+                'required' => true,
+                'description' => 'Discord webhook URL to send notifications to.',
             ],
-            // Dynamic per-department fields (auto-updates when depts change)
-            $this->departmentDynamicFields()
-        );
+            [
+                'name' => 'discord_username',
+                'label' => 'Webhook Username (optional)',
+                'type' => 'text',
+                'default' => 'Paymenter',
+            ],
+            [
+                'name' => 'discord_avatar_url',
+                'label' => 'Webhook Avatar URL (optional)',
+                'type' => 'text',
+                'default' => '',
+                'description' => 'If set, overrides the webhook avatar.',
+            ],
+            [
+                'name' => 'ticket_url_template',
+                'label' => 'Ticket URL Template',
+                'type' => 'text',
+                'default' => 'https://account.ikketim.nl/admin/tickets/{id}/edit',
+                'description' => 'Supported tokens: {id}',
+            ],
+
+            // Notification toggles
+            ['name' => 'notify_ticket_created', 'label' => 'Notify: Ticket created', 'type' => 'checkbox', 'default' => true],
+            ['name' => 'notify_ticket_updated', 'label' => 'Notify: Ticket updated', 'type' => 'checkbox', 'default' => true],
+            ['name' => 'notify_ticket_reply', 'label' => 'Notify: Ticket reply posted', 'type' => 'checkbox', 'default' => true],
+            ['name' => 'include_message_body', 'label' => 'Include reply content in Discord', 'type' => 'checkbox', 'default' => false],
+
+            // Update sub-types
+            ['name' => 'notify_update_status', 'label' => 'Update type: Status changed', 'type' => 'checkbox', 'default' => true],
+            ['name' => 'notify_update_subject', 'label' => 'Update type: Subject changed', 'type' => 'checkbox', 'default' => true],
+            ['name' => 'notify_update_department', 'label' => 'Update type: Department changed', 'type' => 'checkbox', 'default' => true],
+            ['name' => 'notify_update_priority', 'label' => 'Update type: Priority changed', 'type' => 'checkbox', 'default' => true],
+            ['name' => 'notify_update_assignee', 'label' => 'Update type: Assignee changed', 'type' => 'checkbox', 'default' => true],
+            ['name' => 'notify_update_other', 'label' => 'Update type: Other field changed', 'type' => 'checkbox', 'default' => true],
+
+            // Mentions (global + per event)
+            [
+                'name' => 'default_mentions',
+                'label' => 'Default mentions (global)',
+                'type' => 'text',
+                'default' => '',
+                'description' => 'Comma-separated: role:ID, user:ID, <@...>, <@&...>',
+            ],
+            ['name' => 'mentions_on_created', 'label' => 'Extra mentions: Ticket created', 'type' => 'text', 'default' => ''],
+            ['name' => 'mentions_on_updated', 'label' => 'Extra mentions: Ticket updated', 'type' => 'text', 'default' => ''],
+            ['name' => 'mentions_on_reply', 'label' => 'Extra mentions: Ticket reply posted', 'type' => 'text', 'default' => ''],
+
+            // Help block (SUPPORTED type: placeholder) :contentReference[oaicite:1]{index=1}
+            [
+                'name' => 'mentions_help',
+                'label' => 'Mentions format help',
+                'type' => 'placeholder',
+                'default' => "Use comma-separated values:\nrole:123 -> <@&123>\nuser:456 -> <@456>\nOr raw mentions: <@123>, <@&456>",
+            ],
+        ];
+
+        return array_merge($config, $this->departmentDynamicFields());
     }
 
     /**
-     * Dynamic fields for each department:
-     * - use general webhook (default true)
-     * - department webhook url
-     * - mentions
+     * Dynamic per-department fields: webhook routing + mentions.
+     * Uses DB table to avoid relying on model class names.
      */
     private function departmentDynamicFields(): array
     {
         try {
             $departments = DB::table('ticket_departments')->orderBy('name')->get(['id', 'name']);
         } catch (\Throwable $e) {
-            // Graceful fallback
+            // If table name differs, don't hard-fail the settings page
             return [[
-                'name' => 'department_config_fallback',
-                'label' => 'Department config fallback',
-                'type' => 'textarea',
-                'default' => '',
-                'description' => 'Could not load departments from DB table ticket_departments. If your install uses a different table name, update the extension.',
-                'required' => false,
+                'name' => 'departments_error',
+                'label' => 'Departments not found',
+                'type' => 'placeholder',
+                'default' => 'Could not load departments from DB table "ticket_departments". If your table name differs, update the extension.',
             ]];
         }
 
-        $fields = [[
-            'name' => 'department_fields_help',
-            'label' => 'Department settings',
-            'type' => 'description',
-            'default' => '',
-            'description' =>
-                "Per department you can set:\n" .
-                "- Mentions (comma-separated)\n" .
-                "- Whether to use the general webhook (default ON)\n" .
-                "- A department-specific webhook URL (used when general is OFF)\n",
-        ]];
+        $fields = [
+            [
+                'name' => 'dept_help',
+                'label' => 'Department routing & mentions',
+                'type' => 'placeholder',
+                'default' => 'For each department you can: (1) use general webhook or a custom webhook, and (2) set mentions.',
+            ],
+        ];
 
         foreach ($departments as $dept) {
             $fields[] = [
@@ -317,8 +242,6 @@ class DiscordTicketWebhook extends Extension
                 'label' => "Use general webhook for: {$dept->name}",
                 'type' => 'checkbox',
                 'default' => true,
-                'description' => 'If enabled, notifications go to the general webhook URL.',
-                'required' => false,
             ];
 
             $fields[] = [
@@ -326,9 +249,7 @@ class DiscordTicketWebhook extends Extension
                 'label' => "Webhook URL for department: {$dept->name}",
                 'type' => 'text',
                 'default' => '',
-                'validation' => 'nullable|url',
                 'description' => 'Used only if “Use general webhook” is disabled for this department.',
-                'required' => false,
             ];
 
             $fields[] = [
@@ -336,20 +257,13 @@ class DiscordTicketWebhook extends Extension
                 'label' => "Mentions for department: {$dept->name}",
                 'type' => 'text',
                 'default' => '',
-                'description' => 'Comma-separated: role:ID, user:ID, or raw <@...> mentions',
-                'required' => false,
+                'description' => 'Comma-separated: role:ID, user:ID, <@...>, <@&...>',
             ];
         }
 
         return $fields;
     }
 
-    /**
-     * Resolve webhook sender based on department settings:
-     * - If dept "use general" checked => general webhook
-     * - Else dept webhook (if set)
-     * - Always safe fallback to general
-     */
     private function webhookForTicket($ticket): DiscordWebhook
     {
         $generalUrl = trim((string)$this->cfg('webhook_url', ''));
@@ -368,8 +282,10 @@ class DiscordTicketWebhook extends Extension
 
         $url = (!$useGeneral && $deptUrl !== '') ? $deptUrl : $generalUrl;
 
-        // safety fallback
-        if ($url === '') $url = $generalUrl;
+        // Safety fallback
+        if ($url === '') {
+            $url = $generalUrl !== '' ? $generalUrl : $deptUrl;
+        }
 
         return new DiscordWebhook(
             webhookUrl: $url,
@@ -380,6 +296,9 @@ class DiscordTicketWebhook extends Extension
 
     private function payload(string $notificationType, string $content, $ticket): array
     {
+        $url = $this->ticketUrl($ticket->id);
+        $mentionsPrefix = $this->mentionsPrefixFor($notificationType, $ticket);
+
         $fields = [];
 
         $status = $ticket->status ?? null;
@@ -391,17 +310,19 @@ class DiscordTicketWebhook extends Extension
         $user = $ticket->user?->email ?? $ticket->user?->name ?? null;
         if ($user) $fields[] = ['name' => 'User', 'value' => (string)$user, 'inline' => true];
 
-        $url = $this->ticketUrl($ticket->id);
-        $mentionsPrefix = $this->mentionsPrefixFor($notificationType, $ticket);
+        $embed = [
+            'title' => "Ticket #{$ticket->id}",
+            'description' => (string)($ticket->subject ?? '(no subject)'),
+            'fields' => $fields,
+        ];
+
+        if ($url) {
+            $embed['url'] = $url; // clickable title
+        }
 
         return [
             'content' => $mentionsPrefix . $content . ($url ? "\n🔗 {$url}" : ''),
-            'embeds' => [[
-                'title' => "Ticket #{$ticket->id}",
-                'url' => $url,
-                'description' => (string)($ticket->subject ?? '(no subject)'),
-                'fields' => $fields,
-            ]],
+            'embeds' => [$embed],
         ];
     }
 
@@ -412,35 +333,29 @@ class DiscordTicketWebhook extends Extension
         return str_replace('{id}', (string)$id, $tpl);
     }
 
-    /**
-     * Mentions priority:
-     * 1) Department mentions if set
-     * 2) Else global default mentions
-     * 3) Always add per-notification-type extra mentions
-     */
     private function mentionsPrefixFor(string $notificationType, $ticket): string
     {
-        $deptMentions = $this->parseMentions((string)$this->cfg($this->departmentMentionKey($ticket), ''));
-        $globalMentions = $this->parseMentions((string)$this->cfg('default_mentions', ''));
+        $deptMentions = $this->parseMentions($this->departmentMentionsRaw($ticket));
+        $globalMentions = $this->parseMentions(trim((string)$this->cfg('default_mentions', '')));
 
         $base = !empty($deptMentions) ? $deptMentions : $globalMentions;
 
         $extra = match ($notificationType) {
-            'created' => $this->parseMentions((string)$this->cfg('mentions_on_created', '')),
-            'updated' => $this->parseMentions((string)$this->cfg('mentions_on_updated', '')),
-            'reply'   => $this->parseMentions((string)$this->cfg('mentions_on_reply', '')),
+            'created' => $this->parseMentions(trim((string)$this->cfg('mentions_on_created', ''))),
+            'updated' => $this->parseMentions(trim((string)$this->cfg('mentions_on_updated', ''))),
+            'reply'   => $this->parseMentions(trim((string)$this->cfg('mentions_on_reply', ''))),
             default   => [],
         };
 
         $all = array_values(array_unique(array_merge($base, $extra)));
-
         return empty($all) ? '' : (implode(' ', $all) . "\n");
     }
 
-    private function departmentMentionKey($ticket): string
+    private function departmentMentionsRaw($ticket): string
     {
         $deptId = $ticket->department_id ?? $ticket->department?->id ?? null;
-        return $deptId ? "mentions_department_{$deptId}" : '__none__';
+        if (!$deptId) return '';
+        return (string)$this->cfg("mentions_department_{$deptId}", '');
     }
 
     private function parseMentions(string $raw): array
@@ -481,4 +396,24 @@ class DiscordTicketWebhook extends Extension
     private function truncate(string $s, int $max): string
     {
         $s = trim($s);
-        if (mb_strlen($_
+        if (mb_strlen($s) <= $max) return $s;
+        return mb_substr($s, 0, $max - 1) . '…';
+    }
+
+    private function cfg(string $key, mixed $default = null): mixed
+    {
+        if (property_exists($this, 'config') && is_array($this->config) && array_key_exists($key, $this->config)) {
+            return $this->config[$key];
+        }
+        if (property_exists($this, 'settings') && is_array($this->settings) && array_key_exists($key, $this->settings)) {
+            return $this->settings[$key];
+        }
+        return $default;
+    }
+
+    private function cfgBool(string $key, bool $default): bool
+    {
+        $v = $this->cfg($key, $default);
+        return filter_var($v, FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? (bool)$default;
+    }
+}
