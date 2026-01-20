@@ -7,7 +7,7 @@ use App\Classes\Extension\Extension;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\View;
-use Paymenter\Extensions\Others\paymenter_discord_webhook\src\Services\DiscordWebhook;
+use namespace Paymenter\Extensions\Others\paymenter_discord_webhook\Services;
 
 #[ExtensionMeta(
     name: 'Discord Ticket Webhook',
