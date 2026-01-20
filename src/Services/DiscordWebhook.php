@@ -1,6 +1,6 @@
 <?php
 
-namespace Paymenter\Extensions\Others\paymenter-discord-webhook\src\Services;
+namespace Paymenter\Extensions\Others\paymenter_discord_webhook\src\Services;
 
 use Illuminate\Support\Facades\Http;
 
